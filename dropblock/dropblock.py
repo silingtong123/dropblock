@@ -58,7 +58,7 @@ class DropBlock2D(nn.Module):
             mask = Bernoulli(gamma).sample((x.shape[0], *mask_sizes))
 
             # place mask on input device
-            mask = mask.to(x.device)
+            mask = mask.to(x.device)   # mask.cuda()
 
             # compute block mask
             block_mask = self._compute_block_mask(mask)
