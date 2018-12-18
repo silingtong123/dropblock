@@ -71,9 +71,28 @@ if __name__ == "__main__":
     #Test Module
     import numpy as np
     from torch.autograd import Variable
-    bottom = Variable(torch.Tensor(np.arange(1*38*50, dtype=np.float32).reshape((1,1,38,50)))) / 2.0
-    print(bottom.size())
-    x = CropAndResizeFunction(7,7)(bottom, torch.Tensor([[0.4561, 0.3417, 0.7110, 0.8990], [ 0.3452,  0.5487,  0.7145,  0.8037]]), torch.Tensor([0, 0]))
+
+    # xxxx = xxx.repeat(4,1)
+    # print(xxxx)
+    rs = np.random.random(4)*0.05
+    print(rs)
+    bs = 256
+    hw = 8
+    sb = 8
+    x = Variable(torch.Tensor(np.arange(bs*64*hw*hw, dtype=np.float32).reshape((bs,64,hw,hw)))) / 20.0
+    rs = np.random.random(4) * 0.05
+    bs = x.size(0)
+    bbox = torch.Tensor([rs[0], rs[1], 1 - rs[2], 1 - rs[3]])
+
+    # print(bottom.size(0))
+    # print(bottom)
+    # x = CropAndResizeFunction(sb,sb)(bottom, torch.Tensor([[0.4561, 0.3417, 0.7110, 0.8990], [0,0,0.9,0.9]]), torch.IntTensor(list(range(bs))))
+    # y = CropAndResizeFunction(sb, sb)(bottom, torch.Tensor([[0.4561, 0.3417, 0.7110, 0.8990], [0, 0, 0.9, 0.9], [0.2,0.2,1,1]]),
+    #                                   torch.Tensor([0, 0]))
+    bbox = bbox.repeat(bs, 1)
+    x = CropAndResizeFunction(sb, sb)(x, bbox, torch.IntTensor(list(range(bs))))
+    # z = torch.cat((x,y), 0)
     print(x.size())
-    print(x)
+    # print(z.size())
+    # print(x)
     pass

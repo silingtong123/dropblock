@@ -60,3 +60,17 @@ class RoIPool(torch.nn.Module):
 
     def forward(self, features, rois):
         return RoIPoolFunction(self.pooled_height, self.pooled_width, self.spatial_scale)(features, rois)
+
+if __name__ == "__main__":
+    #Test Module
+    import numpy as np
+    from torch.autograd import Variable
+    hw = 10
+    bottom = Variable(torch.Tensor(np.arange(1*hw*hw, dtype=np.float32).reshape((1,1,hw,hw)))) / 2.0
+    print(bottom.size())
+    print(bottom)
+    x = RoIPoolFunction(7,7,10)(bottom, torch.Tensor([[0.4561, 0.3417, 0.7110, 0.8990], [0.1,0.1,0.8,0.8]]))
+    # , [0.3452,  0.5487,  0.7145,  0.8037], [2,2,5,6]
+    print(x.size())
+    print(x)
+    pass

@@ -133,6 +133,8 @@ void crop_and_resize_forward(
     THFloatTensor_zero(crops);
 
     // crop_and_resize for each box
+    printf("[DEBUG]")
+    printf(THIntTensor_data(box_index));
     CropAndResizePerBox(
         THFloatTensor_data(image),
         batch_size,

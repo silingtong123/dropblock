@@ -5,13 +5,19 @@ import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 from torchvision.models.resnet import BasicBlock, ResNet
-from ignite.engine import create_supervised_trainer, create_supervised_evaluator, Events
-from ignite.metrics import Accuracy
-from ignite.metrics import RunningAverage
-from ignite.contrib.handlers import ProgressBar
+# from ignite.engine import create_supervised_trainer, create_supervised_evaluator, Events
+# from ignite.metrics import Accuracy
+# from ignite.metrics import RunningAverage
+# from ignite.contrib.handlers import ProgressBar
+
+import sys
+sys.path.append("..")
+print(sys.path)
 
 from dropblock import DropBlock2D, LinearScheduler
-
+from _lib.roi_align.crop_and_resize import CropAndResizeFunction, CropAndResize
+import numpy as np
+from torch.autograd import Variable
 results = []
 
 
@@ -52,9 +58,12 @@ class ResNetCustom(ResNet):
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
+        # print(x.size()) 8 8
 
         x = self.dropblock(self.layer1(x))
+        # print(x.size()) 8 8
         x = self.dropblock(self.layer2(x))
+        # print(x.size()) 4 4
         x = self.layer3(x)
         x = self.layer4(x)
 
@@ -64,9 +73,72 @@ class ResNetCustom(ResNet):
 
         return x
 
+class ResNetCustom2(ResNet):
+
+    def __init__(self, block, layers, num_classes=1000, drop_prob=0., block_size=5):
+        super(ResNet, self).__init__()
+        self.inplanes = 64
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+                               bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.dropblock = LinearScheduler(
+            DropBlock2D(drop_prob=drop_prob, block_size=block_size),
+            start_value=0.,
+            stop_value=drop_prob,
+            nr_steps=5e3
+        )
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.cr = CropAndResize(8, 8)  # 8 is according to the real size
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # self.dropblock.step()  # increment number of iterations
+
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        # add crop_and_resize Here
+        if self.training and True:
+            print(type(x))
+            rs = np.random.random(4) * 0.05
+            bs = x.size(0)
+            bbox = torch.Tensor([rs[0], rs[1], 1-rs[2], 1-rs[3]])
+            bbox = bbox.repeat(bs, 1)
+            print(bbox)
+            x = self.cr(x, bbox, torch.IntTensor(list(range(bs))))
+            print(x.size())
+            print(x)
+        # print(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = x.view(x.shape[0], -1)
+        x = self.fc(x)
+
+        return x
 
 def resnet9(**kwargs):
     return ResNetCustom(BasicBlock, [1, 1, 1, 1], **kwargs)
+
+def resnet9b(**kwargs):
+    return ResNetCustom2(BasicBlock, [1, 1, 1, 1], **kwargs)
 
 
 def logger(engine, model, evaluator, loader, pbar):
@@ -99,7 +171,7 @@ if __name__ == '__main__':
                         help='dropblock dropout probability')
     parser.add_argument('--block_size', required=False, type=int, default=5,
                         help='dropblock block size')
-    parser.add_argument('--device', required=False, default=None, type=int,
+    parser.add_argument('--device', required=False, default=0, type=int,
                         help='CUDA device id for GPU training')
     options = parser.parse_args()
 
@@ -143,26 +215,68 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # create ignite engines
-    trainer = create_supervised_trainer(model=model,
-                                        optimizer=optimizer,
-                                        loss_fn=criterion,
-                                        device=device)
+    # trainer = create_supervised_trainer(model=model,
+    #                                     optimizer=optimizer,
+    #                                     loss_fn=criterion,
+    #                                     device=device)
+    #
+    # evaluator = create_supervised_evaluator(model,
+    #                                         metrics={'accuracy': Accuracy()},
+    #                                         device=device)
+    #
+    # # ignite handlers
+    # RunningAverage(output_transform=lambda x: x).attach(trainer, 'loss')
+    #
+    # pbar = ProgressBar()
+    # pbar.attach(trainer, ['loss'])
+    #
+    # trainer.add_event_handler(Events.EPOCH_COMPLETED, logger, model, evaluator, test_loader, pbar)
+    #
+    # # start training
+    # t0 = time.time()
+    # trainer.run(train_loader, max_epochs=epochs)
+    # t1 = time.time()
+    # print('Best Accuracy:', max(results))
+    # print('Total time:', t1 - t0)
 
-    evaluator = create_supervised_evaluator(model,
-                                            metrics={'accuracy': Accuracy()},
-                                            device=device)
+    model.cuda()
+    for epoch in range(epochs):
+        train_loss = 0
+        correct = 0
+        total = 0
+        model.train()
+        for batch_idx, data_batch in enumerate(train_loader):
+            x, y = data_batch
+            x = Variable(x).cuda()
+            y = Variable(y).cuda()
+            outputs = model(x)
+            optimizer.zero_grad()
 
-    # ignite handlers
-    RunningAverage(output_transform=lambda x: x).attach(trainer, 'loss')
+            loss = criterion(outputs, y)
 
-    pbar = ProgressBar()
-    pbar.attach(trainer, ['loss'])
+            loss.backward()
+            optimizer.step()
 
-    trainer.add_event_handler(Events.EPOCH_COMPLETED, logger, model, evaluator, test_loader, pbar)
+            train_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            correct += predicted.eq(y.data).cpu().sum().item()
+            total += bsize
+            correct_percent = 1.0 * correct / total
+            print("\r[EPOCH {0:d}] \tloss: {1:6.4f}, \tacc: {2:6.4f}".format(epoch, train_loss / (batch_idx+1), correct_percent), end="")
+        print("")
 
-    # start training
-    t0 = time.time()
-    trainer.run(train_loader, max_epochs=epochs)
-    t1 = time.time()
-    print('Best Accuracy:', max(results))
-    print('Total time:', t1 - t0)
+        model.eval()
+        correct_test = 0
+        total_test = 0
+        for batch_idx, data_batch in enumerate(test_loader):
+            x, y = data_batch
+            x = Variable(x).cuda()
+            y = Variable(y).cuda()
+            outputs = model(x)
+
+            _, predicted = torch.max(outputs.data, 1)
+            correct_test += predicted.eq(y.data).cpu().sum().item()
+            total_test += bsize
+
+        correct_percent = 1.0 * correct_test / total_test
+        print("TEST acc: {0:6.4f}".format(correct_percent))
