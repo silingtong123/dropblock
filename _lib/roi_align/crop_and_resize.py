@@ -29,7 +29,8 @@ class CropAndResizeFunction(Function):
         # save for backward
         self.im_size = image.size()
         self.save_for_backward(boxes, box_ind)
-
+        print("Finish Crop And Resize ")
+        print(crops)
         return crops
 
     def backward(self, grad_outputs):

@@ -18,6 +18,8 @@ from dropblock import DropBlock2D, LinearScheduler
 from _lib.roi_align.crop_and_resize import CropAndResizeFunction, CropAndResize
 import numpy as np
 from torch.autograd import Variable
+from roIAlign.roi_align.roi_align import RoIAlign
+
 results = []
 
 
@@ -58,13 +60,14 @@ class ResNetCustom(ResNet):
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
-        # print(x.size()) 8 8
+        # print(x.size()) # 8 8
 
         x = self.dropblock(self.layer1(x))
-        # print(x.size()) 8 8
+        # print(x.size()) # 8 8
         x = self.dropblock(self.layer2(x))
-        # print(x.size()) 4 4
-        x = self.layer3(x)
+        # print(x.size()) # 4 4
+        x = self.layer3(x) # 2 2
+
         x = self.layer4(x)
 
         x = self.avgpool(x)
@@ -72,6 +75,14 @@ class ResNetCustom(ResNet):
         x = self.fc(x)
 
         return x
+
+def to_varabile(arr, requires_grad=False, is_cuda=True):
+    tensor = torch.from_numpy(arr)
+    if is_cuda:
+        tensor = tensor.cuda()
+    var = Variable(tensor, requires_grad=requires_grad)
+    return var
+
 
 class ResNetCustom2(ResNet):
 
@@ -95,7 +106,8 @@ class ResNetCustom2(ResNet):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
-        self.cr = CropAndResize(8, 8)  # 8 is according to the real size
+        # self.cr = CropAndResize(8, 8)  # 8 is according to the real size
+        self.cr = RoIAlign(2, 2, transform_fpcoor=True)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -112,20 +124,24 @@ class ResNetCustom2(ResNet):
         x = self.relu(x)
         x = self.maxpool(x)
         # add crop_and_resize Here
-        if self.training and True:
-            print(type(x))
-            rs = np.random.random(4) * 0.05
-            bs = x.size(0)
-            bbox = torch.Tensor([rs[0], rs[1], 1-rs[2], 1-rs[3]])
-            bbox = bbox.repeat(bs, 1)
-            print(bbox)
-            x = self.cr(x, bbox, torch.IntTensor(list(range(bs))))
-            print(x.size())
-            print(x)
-        # print(x)
+
         x = self.layer1(x)
         x = self.layer2(x)
-        x = self.layer3(x)
+        x = self.layer3(x)  # 2 2
+        if self.training == True or True:
+            # print(type(x))
+            rs = np.random.random(4) * 0.05
+            rs[2], rs[3] = 1 - rs[2], 1 - rs[3]
+            bs = x.size(0)
+            bbox = to_varabile(np.asarray([rs], dtype=np.float32))
+            bbox = bbox.repeat(bs, 1)
+            # print(bbox)
+            box_index_data = to_varabile(np.arange(bs, dtype=np.int32))
+            x = self.cr(x, bbox, box_index_data)
+            print("............................................Runing Roialign", end="\r")
+        else:
+            print("............................................TEST No Align ", end="\r")
+
         x = self.layer4(x)
 
         x = self.avgpool(x)
@@ -208,7 +224,7 @@ if __name__ == '__main__':
                'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
     # define model
-    model = resnet9(num_classes=len(classes), drop_prob=drop_prob, block_size=block_size)
+    model = resnet9b(num_classes=len(classes), drop_prob=drop_prob, block_size=block_size)
 
     # define loss and optimizer
     criterion = nn.CrossEntropyLoss()
